@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- agenttasks_v1_agenttask.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
