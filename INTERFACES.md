@@ -24,7 +24,7 @@ Parallel work without agreed contracts produces integration disasters. The first
 Frozen by **end of Week 2**. Owned by Track B (defines the type), consumed by Track A (SDK reads it).
 
 ```yaml
-apiVersion: agentanvil.dev/v1alpha1
+apiVersion: agenttasks.agentanvil.com/v1
 kind: AgentTask
 metadata:
   name: example-task
@@ -68,12 +68,12 @@ spec:
 
   # Optional: checkpointing policy
   checkpointPolicy:
-    mode: manual                     # manual | every-step | interval
+    mode: Manual                     # Manual | EveryStep | Interval
     intervalSeconds: 300
 
   # Optional: replay config (set by operator when this task is a replay)
   replay:
-    fromTaskID: "task-abc-123"
+    checkpointId: "task-abc-123"
     fromStep: 0                      # 0 = full replay, >0 = restore + replay from step
 
 status:
@@ -93,7 +93,7 @@ status:
 
 ### Versioning
 
-CRD is `v1alpha1`. Breaking changes during the 6-month build are expected and don't require version bumps. Post-v1.0, version bumps require both engineers' sign-off.
+CRD is `v1`. Breaking changes during the 6-month build are expected and don't require version bumps. Post-v1.0, version bumps require both engineers' sign-off.
 
 ---
 
