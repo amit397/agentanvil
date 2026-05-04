@@ -26,16 +26,25 @@ import (
 
 // AgentTaskSpec defines the desired state of AgentTask
 type AgentTaskSpec struct {
-	Prompt           string                `json:"prompt,omitempty"`
-	SystemPrompt     string                `json:"systemPrompt,omitempty"`
-	Model            ModelSpec             `json:"model,omitempty"`
-	Tools            []ToolSpec            `json:"tools,omitempty"`
-	Workspace        *WorkspaceSpec        `json:"workspace"`
-	TimeoutSeconds   *int64                `json:"timeoutSeconds"`
-	MaxSteps         *int64                `json:"maxSteps"`
+	// Required: What the agent should do
+	Prompt       string `json:"prompt"`
+	SystemPrompt string `json:"systemPrompt"`
+
+	// Required: Model configuration for the agent
+	Model *ModelSpec `json:"model"`
+	Tools []ToolSpec `json:"tools"`
+
+	// Optional: Workspace configuration for the agent
+	Workspace *WorkspaceSpec `json:"workspace,omitempty"`
+
+	// Optional: Limitations and policies for the agent task
+	TimeoutSeconds   *int64                `json:"timeoutSeconds,omitempty"`
+	MaxSteps         *int64                `json:"maxSteps,omitempty"`
 	Resources        *ResourceSpec         `json:"resources,omitempty"`
-	CheckpointPolicy *CheckpointPolicySpec `json:"checkpointPolicy"`
-	Replay           *ReplaySpec           `json:"replay"`
+	CheckpointPolicy *CheckpointPolicySpec `json:"checkpointPolicy,omitempty"`
+
+	// Optional: Replay configuration for resuming from a previous checkpoint
+	Replay *ReplaySpec `json:"replay,omitempty"`
 }
 
 // AgentTaskStatus defines the observed state of AgentTask.
