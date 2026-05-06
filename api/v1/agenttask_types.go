@@ -88,7 +88,9 @@ type AgentTaskList struct {
 	Items           []AgentTask `json:"items"`
 }
 
-// Helper structs and types for AgentTaskSpec
+// ///////////////////////////////////
+// Helper types for AgentTaskSpec //
+// //////////////////////////////////
 type APIKeySecretRef struct {
 	Name string `json:"name,omitempty"`
 	Key  string `json:"key,omitempty"`
@@ -135,7 +137,9 @@ type ReplaySpec struct {
 	FromStep     int64  `json:"fromStep,omitempty"`
 }
 
-// Helper types for AgentTaskStatus
+// ////////////////////////////////////
+// Helper types for AgentTaskStatus //
+// ////////////////////////////////////
 type PhaseType string
 
 const (
