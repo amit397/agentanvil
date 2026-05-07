@@ -150,9 +150,31 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	} else {
 		// If PodName is set, we can check the status of the pod and update the AgentTask status accordingly if needed.
 		pod := &corev1.Pod{}
-		if err := r.Get(ctx, types.NamespacedName{Name: agenttask.Status.PodName, Namespace: agenttask.Namespace}, pod); err != nil {
-			logger.Error(err, "Unable to fetch associated Pod for AgentTask", "podName", agenttask.Status.PodName)
-			return ctrl.Result{}, client.IgnoreNotFound(err)
+		err := r.Get(ctx, types.NamespacedName{Name: agenttask.Status.PodName, Namespace: agenttask.Namespace}, pod)
+
+		if err != nil {
+			if client.IgnoreNotFound(err) == nil && !(agenttask.Status.Phase == agenttasksv1.Completed || agenttask.Status.Phase == agenttasksv1.Failed || agenttask.Status.Phase == agenttasksv1.Evicted) {
+				// If the pod is not found and the AgentTask status does not indicate a terminal phase, we consider this a failure and update the status to Failed.
+				logger.Error(err, "Pod not found for AgentTask, marking as Failed", "podName", agenttask.Status.PodName)
+
+				agenttask.Status.Phase = agenttasksv1.Failed
+				agenttask.Status.Reason = "Pod not found"
+				if err := r.Status().Update(ctx, agenttask); err != nil {
+					logger.Error(err, "Unable to update AgentTask status to Failed due to missing Pod")
+					return ctrl.Result{}, err
+				}
+
+				logger.Info("Updated AgentTask status to Failed due to missing Pod", "podName", agenttask.Status.PodName)
+				return ctrl.Result{}, nil
+			} else if client.IgnoreNotFound(err) == nil && (agenttask.Status.Phase == agenttasksv1.Completed || agenttask.Status.Phase == agenttasksv1.Failed || agenttask.Status.Phase == agenttasksv1.Evicted) {
+				// If the pod is not found but the AgentTask status indicates a terminal phase, we ignore.
+				logger.Info("Pod not found for AgentTask, but status is already in terminal phase, ignoring", "podName", agenttask.Status.PodName, "phase", agenttask.Status.Phase)
+				return ctrl.Result{}, nil
+			} else {
+				// For any other error, log it and requeue.
+				logger.Error(err, "Unable to fetch Pod for AgentTask", "podName", agenttask.Status.PodName)
+				return ctrl.Result{}, err
+			}
 		}
 
 		updateStatus := false
