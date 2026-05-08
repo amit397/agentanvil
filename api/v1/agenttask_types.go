@@ -97,15 +97,15 @@ type APIKeySecretRef struct {
 }
 
 type ModelSpec struct {
-	Provider        string           `json:"provider,omitempty"`
-	Name            string           `json:"name,omitempty"`
-	APIKeySecretRef *APIKeySecretRef `json:"apiKeySecretRef,omitempty"`
-	Params          map[string]any   `json:"params,omitempty"`
+	Provider        string            `json:"provider,omitempty"`
+	Name            string            `json:"name,omitempty"`
+	APIKeySecretRef *APIKeySecretRef  `json:"apiKeySecretRef,omitempty"`
+	Params          map[string]string `json:"params,omitempty"`
 }
 
 type ToolSpec struct {
 	Name           string `json:"name,omitempty"`
-	TimeoutSeconds *int64 `json:"timeoutSeconds"`
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
 }
 
 type WorkspaceSpec struct {

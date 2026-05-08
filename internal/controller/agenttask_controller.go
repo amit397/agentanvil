@@ -91,25 +91,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if agenttask.Status.PodName == "" {
 		// If phase is pending, we need to create a new pod for this task.
 		if agenttask.Status.Phase == agenttasksv1.Pending {
-			newPod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: agenttask.Name + "-pod-",
-					Namespace:    agenttask.Namespace,
-					Labels: map[string]string{
-						"agenttask": agenttask.Name,
-					},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "agent-task-container",
-							Image: "busybox",                 // TODO: Replace with the actual image needed for the task
-							Args:  []string{"sleep", "3600"}, // Placeholder command, replace with actual command for the task
-						},
-					},
-					RestartPolicy: corev1.RestartPolicyNever,
-				},
-			}
+			newPod := buildPodForAgentTask(agenttask)
 
 			// Set the owner reference on the new Pod
 			if err := controllerutil.SetControllerReference(agenttask, newPod, r.Scheme); err != nil {
@@ -140,6 +122,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 			agenttask.Status.Phase = agenttasksv1.Failed
 			agenttask.Status.Reason = "Invalid state"
+			agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
 			if err := r.Status().Update(ctx, agenttask); err != nil {
 				logger.Error(err, "Unable to update AgentTask status to Failed due to invalid state")
 				return ctrl.Result{}, err
@@ -159,6 +142,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 				agenttask.Status.Phase = agenttasksv1.Failed
 				agenttask.Status.Reason = "Pod not found"
+				agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
 				if err := r.Status().Update(ctx, agenttask); err != nil {
 					logger.Error(err, "Unable to update AgentTask status to Failed due to missing Pod")
 					return ctrl.Result{}, err
@@ -193,6 +177,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			agenttask.Status.Phase = agenttasksv1.Running
 
 			if agenttask.Status.StartedAt == nil {
+				updateStatus = true
 				agenttask.Status.StartedAt = &metav1.Time{Time: metav1.Now().Time}
 			}
 		case corev1.PodSucceeded:
@@ -203,9 +188,14 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Info("Pod completed successfully, updating AgentTask status to Completed", "podName", pod.Name)
 
 			if agenttask.Status.FinishedAt == nil {
+				updateStatus = true
 				agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
 			}
-			agenttask.Status.Reason = "Pod completed successfully."
+
+			if agenttask.Status.Reason != "Pod completed successfully." {
+				agenttask.Status.Reason = "Pod completed successfully."
+				updateStatus = true
+			}
 		case corev1.PodFailed:
 			if pod.Status.Reason == "Evicted" {
 				if agenttask.Status.Phase != agenttasksv1.Evicted {
@@ -213,9 +203,10 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					logger.Info("Pod was evicted, updating AgentTask status to Evicted", "podName", pod.Name)
 				}
 				agenttask.Status.Phase = agenttasksv1.Evicted
-				agenttask.Status.Reason = "Pod was evicted."
-				if agenttask.Status.FinishedAt == nil {
-					agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
+
+				if agenttask.Status.Reason != "Pod was evicted." {
+					agenttask.Status.Reason = "Pod was evicted."
+					updateStatus = true
 				}
 			} else {
 				if agenttask.Status.Phase != agenttasksv1.Failed {
@@ -223,13 +214,32 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 					logger.Info("Pod failed, updating AgentTask status to Failed", "podName", pod.Name)
 				}
 				agenttask.Status.Phase = agenttasksv1.Failed
-				agenttask.Status.Reason = "Pod failed."
+
+				if agenttask.Status.Reason != "Pod failed." {
+					agenttask.Status.Reason = "Pod failed."
+					updateStatus = true
+				}
+			}
+			if agenttask.Status.FinishedAt == nil {
+				updateStatus = true
+				agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
 			}
 		default:
 			logger.Error(nil, "Pod is in unexpected phase", "podPhase", pod.Status.Phase)
 			agenttask.Status.Phase = agenttasksv1.Failed
 			agenttask.Status.Reason = "Pod in unexpected phase"
-			updateStatus = true
+			if agenttask.Status.FinishedAt == nil {
+				agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
+				updateStatus = true
+			}
+
+			if err := r.Status().Update(ctx, agenttask); err != nil {
+				logger.Error(err, "Unable to update AgentTask status to Failed due to unexpected Pod phase")
+				return ctrl.Result{}, err
+			}
+
+			logger.Info("Updated AgentTask status to Failed due to unexpected Pod phase", "podName", pod.Name, "podPhase", pod.Status.Phase)
+			return ctrl.Result{}, nil
 		}
 
 		// Only update if there has been a change in status to avoid unnecessary API calls.
