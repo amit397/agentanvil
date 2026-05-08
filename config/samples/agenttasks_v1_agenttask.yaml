@@ -6,4 +6,11 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: agenttask-sample
 spec:
-  # TODO(user): Add fields here
+  prompt: "hello"
+  systemPrompt: "be careful"
+  model:
+    provider: "anthropic"
+    name: "placeholder"
+  tools:
+    - name: "bash"
+      timeoutSeconds: 60
