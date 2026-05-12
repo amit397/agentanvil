@@ -262,3 +262,12 @@ Order of importance for hiring signal:
 ## Out-of-scope but worth noting
 
 If v1 succeeds, follow-up work could include: multi-agent orchestration (subagents, planner/executor splits), RL-style rollouts at scale (training data generation), computer-use agents (with E2B Desktop-style virtual desktops), production-grade multi-tenancy with billing. None of these are committed.
+
+## How to test (v1)
+
+- Run on one terminal:
+  - ```make manifests```
+  - ```make install```
+  - ```make run```
+- Run on another terminal:
+  - ```kubectl apply -f config/samples/agenttasks_v1_agenttask.yaml```

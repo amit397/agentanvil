@@ -124,8 +124,6 @@ spec:
                     timeoutSeconds:
                       format: int64
                       type: integer
-                  required:
-                  - timeoutSeconds
                   type: object
                 type: array
               workspace:
