@@ -18,6 +18,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
+
+	"crypto/sha256"
 
 	logr "github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -94,12 +97,17 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if agenttask.Status.PodName == "" {
 		// If phase is pending, we need to create a new pod for this task.
 		if agenttask.Status.Phase == agenttasksv1.Pending {
-			if err := r.ensureConfigMapForPod(ctx, agenttask, logger, nil); err != nil {
+			if err := r.ensureConfigMapForPod(ctx, agenttask, logger); err != nil {
 				logger.Error(err, "Unable to ensure ConfigMap for Pod during initial Pending phase")
 				return ctrl.Result{}, err
 			}
 
 			newPod := buildPodForAgentTask(agenttask)
+
+			if newPod == nil {
+				logger.Error(nil, "Unable to build Pod for AgentTask")
+				return ctrl.Result{}, fmt.Errorf("unable to build Pod for AgentTask")
+			}
 
 			// Set the owner reference on the new Pod
 			if err := controllerutil.SetControllerReference(agenttask, newPod, r.Scheme); err != nil {
@@ -170,6 +178,25 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 
 		updateStatus := false
+
+		configMap := &corev1.ConfigMap{}
+		err = r.Get(ctx, types.NamespacedName{Name: buildConfigMapName(agenttask), Namespace: agenttask.Namespace}, configMap)
+		if err != nil {
+			if client.IgnoreNotFound(err) == nil {
+				configMapName := configMap.Name
+
+				expectedConfigMapName := buildConfigMapName(agenttask)
+				if configMapName != expectedConfigMapName {
+					logger.Info("AgentTask spec update detected, but existing Pod and ConfigMap are based on previous spec. Preserving idempotency by ignoring spec update until current Pod completes.", "agentTaskName", agenttask.Name, "existingConfigMapName", configMapName, "expectedConfigMapName", expectedConfigMapName)
+				} else if configMapName == "" {
+					logger.Info("ConfigMap for AgentTask not found, but Pod already exists. This may indicate a problem with the ConfigMap creation or an update to the AgentTask spec after Pod creation. Preserving idempotency by ignoring missing ConfigMap until current Pod completes.", "agentTaskName", agenttask.Name, "configMapName", buildConfigMapName(agenttask))
+				}
+			} else {
+				logger.Error(err, "Unable to fetch ConfigMap for AgentTask", "configMapName", buildConfigMapName(agenttask))
+				return ctrl.Result{}, err
+			}
+		}
+
 		switch pod.Status.Phase {
 		case corev1.PodPending:
 			if agenttask.Status.Phase != agenttasksv1.Provisioning {
@@ -177,11 +204,6 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				logger.Info("Pod is pending, updating AgentTask status to Provisioning", "podName", pod.Name)
 			}
 			agenttask.Status.Phase = agenttasksv1.Provisioning
-
-			if err := r.ensureConfigMapForPod(ctx, agenttask, logger, &updateStatus); err != nil {
-				logger.Error(err, "Unable to ensure ConfigMap for Pod during Pending phase")
-				return ctrl.Result{}, err
-			}
 
 		case corev1.PodRunning:
 			if agenttask.Status.Phase != agenttasksv1.Running {
@@ -196,6 +218,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				agenttask.Status.StartedAt = &metav1.Time{Time: metav1.Now().Time}
 				logger.Info("Set AgentTask StartedAt timestamp", "podName", pod.Name, "startedAt", agenttask.Status.StartedAt)
 			}
+
 		case corev1.PodSucceeded:
 			if agenttask.Status.Phase != agenttasksv1.Completed {
 				logger.Info("Pod completed successfully, updating AgentTask status to Completed", "podName", pod.Name)
@@ -213,6 +236,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				agenttask.Status.Reason = "Pod completed successfully."
 				updateStatus = true
 			}
+
 		case corev1.PodFailed:
 			if pod.Status.Reason == "Evicted" {
 				if agenttask.Status.Phase != agenttasksv1.Evicted {
@@ -242,6 +266,7 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				agenttask.Status.FinishedAt = &metav1.Time{Time: metav1.Now().Time}
 				logger.Info("Set AgentTask FinishedAt timestamp", "podName", pod.Name, "finishedAt", agenttask.Status.FinishedAt)
 			}
+
 		default:
 			logger.Error(nil, "Pod is in unexpected phase", "podPhase", pod.Status.Phase)
 			agenttask.Status.Phase = agenttasksv1.Failed
@@ -266,7 +291,6 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				logger.Error(err, "Unable to update AgentTask status based on Pod status", "podName", pod.Name)
 				return ctrl.Result{}, err
 			}
-			logger.Info("Updated AgentTask status based on Pod status", "podName", pod.Name, "newPhase", agenttask.Status.Phase)
 		}
 	}
 
@@ -289,7 +313,7 @@ func buildConfigMapForAgentTask(agenttask *agenttasksv1.AgentTask, logger logr.L
 
 	config_map := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      agenttask.Name + "-config",
+			Name:      buildConfigMapName(agenttask),
 			Namespace: agenttask.Namespace,
 		},
 		Data: map[string]string{
@@ -300,20 +324,17 @@ func buildConfigMapForAgentTask(agenttask *agenttasksv1.AgentTask, logger logr.L
 }
 
 // Helper function to hook ConfigMap to the Pod if not already present.
-func (r *AgentTaskReconciler) ensureConfigMapForPod(ctx context.Context, agenttask *agenttasksv1.AgentTask, logger logr.Logger, updateStatus *bool) error {
+func (r *AgentTaskReconciler) ensureConfigMapForPod(ctx context.Context, agenttask *agenttasksv1.AgentTask, logger logr.Logger) error {
 	if agenttask == nil {
 		return nil
 	}
 
 	configMap := &corev1.ConfigMap{}
-	configMapName := agenttask.Name + "-config"
+	configMapName := buildConfigMapName(agenttask)
 	err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: agenttask.Namespace}, configMap)
 	if err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			if updateStatus != nil {
-				*updateStatus = true
-			}
-			// ConfigMap does not exist, create it in next reconcile loop
+		if client.IgnoreNotFound(err) == nil && agenttask.Status.PodName == "" {
+			// ConfigMap does not exist or has been updated, create it/update it.
 			logger.Info("Creating ConfigMap for AgentTask", "configMapName", configMapName)
 			newConfigMap := buildConfigMapForAgentTask(agenttask, logger)
 			if newConfigMap == nil {
@@ -332,8 +353,11 @@ func (r *AgentTaskReconciler) ensureConfigMapForPod(ctx context.Context, agentta
 			}
 
 			logger.Info("Created ConfigMap for AgentTask", "configMapName", newConfigMap.Name)
+		} else if agenttask.Status.PodName != "" {
+			logger.Error(err, "Pod already exists for AgentTask, blocking update of ConfigMap to preserve idempotency", "agentTaskName", agenttask.Name)
+			return err
 		} else {
-			logger.Error(err, "Unable to fetch ConfigMap for AgentTask", "agentTaskName", agenttask.Name)
+			logger.Error(err, "Unable to fetch ConfigMap for AgentTask", "configMapName", configMapName)
 			return err
 		}
 	} else {
@@ -341,6 +365,30 @@ func (r *AgentTaskReconciler) ensureConfigMapForPod(ctx context.Context, agentta
 	}
 
 	return nil
+}
+
+// Calculate a hash of the AgentTask spec to use as an annotation on the Pod for change detection.
+func calculateSpecHash(agenttask *agenttasksv1.AgentTask, specBytes []byte) string {
+	if agenttask == nil {
+		return ""
+	}
+
+	hash := sha256.Sum256(specBytes)
+	return fmt.Sprintf("%x", hash)
+}
+
+func buildConfigMapName(agenttask *agenttasksv1.AgentTask) string {
+	if agenttask == nil {
+		return ""
+	}
+
+	specBytes, err := yaml.Marshal(agenttask.Spec)
+	if err != nil {
+		// Log the error and return a fallback name or handle it as needed
+		return ""
+	}
+
+	return agenttask.Name + calculateSpecHash(agenttask, specBytes) + "-config"
 }
 
 // SetupWithManager sets up the controller with the Manager.

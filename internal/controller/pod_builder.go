@@ -74,7 +74,7 @@ func buildPodForAgentTask(agenttask *agenttasksv1.AgentTask) *corev1.Pod {
 								{
 									ConfigMap: &corev1.ConfigMapProjection{
 										LocalObjectReference: corev1.LocalObjectReference{
-											Name: agenttask.Name + "-config",
+											Name: buildConfigMapName(agenttask),
 										},
 									},
 								},
