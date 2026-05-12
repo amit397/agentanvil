@@ -179,21 +179,16 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		updateStatus := false
 
-		configMap := &corev1.ConfigMap{}
-		err = r.Get(ctx, types.NamespacedName{Name: buildConfigMapName(agenttask), Namespace: agenttask.Namespace}, configMap)
-		if err != nil {
-			if client.IgnoreNotFound(err) == nil {
-				configMapName := configMap.Name
+		if agenttask.Status.Phase == agenttasksv1.Running {
+			configMap := pod.Spec.Volumes[0].VolumeSource.Projected.Sources[0].ConfigMap
+			if configMap == nil {
+				logger.Error(nil, "Error reading configMap for Pod", "podName", pod.Name)
 
-				expectedConfigMapName := buildConfigMapName(agenttask)
-				if configMapName != expectedConfigMapName {
-					logger.Info("AgentTask spec update detected, but existing Pod and ConfigMap are based on previous spec. Preserving idempotency by ignoring spec update until current Pod completes.", "agentTaskName", agenttask.Name, "existingConfigMapName", configMapName, "expectedConfigMapName", expectedConfigMapName)
-				} else if configMapName == "" {
-					logger.Info("ConfigMap for AgentTask not found, but Pod already exists. This may indicate a problem with the ConfigMap creation or an update to the AgentTask spec after Pod creation. Preserving idempotency by ignoring missing ConfigMap until current Pod completes.", "agentTaskName", agenttask.Name, "configMapName", buildConfigMapName(agenttask))
-				}
-			} else {
-				logger.Error(err, "Unable to fetch ConfigMap for AgentTask", "configMapName", buildConfigMapName(agenttask))
-				return ctrl.Result{}, err
+				return ctrl.Result{}, fmt.Errorf("error reading configMap for Pod %s", pod.Name)
+			}
+
+			if configMap.Name != buildConfigMapName(agenttask) {
+				logger.Info("AgentTask spec update ignored to preserve idempotenncy of running Pod", "podName", pod.Name, "currentConfigMap", configMap.Name, "expectedConfigMap", buildConfigMapName(agenttask))
 			}
 		}
 
