@@ -48,6 +48,7 @@ type AgentTaskReconciler struct {
 // +kubebuilder:rbac:groups=agenttasks.agentanvil.com,resources=agenttasks/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -102,6 +103,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
+			if err := r.ensureNetworkPolicyForPod(ctx, agenttask, logger); err != nil {
+				logger.Error(err, "Unable to ensure NetworkPolicy for Pod during initial Pending phase")
+				return ctrl.Result{}, err
+			}
+
 			newPod := buildPodForAgentTask(agenttask)
 
 			if newPod == nil {
@@ -130,7 +136,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
-			logger.Info("Updated AgentTask status with new Pod name and set phase to Provisioning", "podName", newPod.Name)
+			logger.Info("Updated AgentTask status with new Pod name and set phase to Provisioning", "podName", agenttask.Status.PodName, "phase", agenttask.Status.Phase)
+
+			return ctrl.Result{}, nil
 		} else {
 			// If PodName is not set but phase is not Pending, this is an invalid state. Log an error and update the status to Failed.
 			// (We consider this invalid for now, may update in the future.)
@@ -179,8 +187,9 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		updateStatus := false
 
-		if agenttask.Status.Phase == agenttasksv1.Running {
-			configMap := pod.Spec.Volumes[0].VolumeSource.Projected.Sources[0].ConfigMap
+		if pod.Status.Phase == corev1.PodRunning || pod.Status.Phase == corev1.PodPending {
+			// Ignore any updates to the Pod spec or configMap while the task is running to preserve idempotency and avoid disrupting the running task.
+			configMap := getConfigMapFromPod(pod, "task", "task.yaml", "task.yaml")
 			if configMap == nil {
 				logger.Error(nil, "Error reading configMap for Pod", "podName", pod.Name)
 
@@ -188,10 +197,11 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 
 			if configMap.Name != buildConfigMapName(agenttask) {
-				logger.Info("AgentTask spec update ignored to preserve idempotenncy of running Pod", "podName", pod.Name, "currentConfigMap", configMap.Name, "expectedConfigMap", buildConfigMapName(agenttask))
+				logger.Info("AgentTask spec update ignored to preserve idempotenncy of Pod", "podName", pod.Name, "currentConfigMap", configMap.Name, "expectedConfigMap", buildConfigMapName(agenttask))
 			}
 		}
 
+		// Update the AgentTask status based on the Pod status. We will update the status if there is a change to avoid unnecessary API calls.
 		switch pod.Status.Phase {
 		case corev1.PodPending:
 			if agenttask.Status.Phase != agenttasksv1.Provisioning {
@@ -292,6 +302,22 @@ func (r *AgentTaskReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
+// SetupWithManager sets up the controller with the Manager.
+func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&agenttasksv1.AgentTask{}).
+		Named("agenttask").
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &agenttasksv1.AgentTask{}),
+		).
+		Complete(r)
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////// Helper Functions //////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Helper function to build the ConfigMap for the Pod with the AgentTask spec data. This ConfigMap will be mounted as a volume in the Pod and used by the agent container to get the task configuration.
 func buildConfigMapForAgentTask(agenttask *agenttasksv1.AgentTask, logger logr.Logger) *corev1.ConfigMap {
 	if agenttask == nil {
@@ -362,6 +388,65 @@ func (r *AgentTaskReconciler) ensureConfigMapForPod(ctx context.Context, agentta
 	return nil
 }
 
+// Helper function to fetch the ConfigMap for a pod inside the agent container.
+func getConfigMapFromPod(pod *corev1.Pod, volumeName string, key string, path string) *corev1.ConfigMapProjection {
+	if pod == nil {
+		return nil
+	}
+
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == volumeName {
+			if volume.VolumeSource.Projected != nil {
+				for _, source := range volume.VolumeSource.Projected.Sources {
+					if source.ConfigMap != nil {
+						for _, item := range source.ConfigMap.Items {
+							if item.Key == key && item.Path == path {
+								return source.ConfigMap
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Helper function to create network policy for the agent task pod to restrict all egress traffic; this blocks traffic leaving the pod to ensure secure execution of tasks.
+func (r *AgentTaskReconciler) ensureNetworkPolicyForPod(ctx context.Context, agenttask *agenttasksv1.AgentTask, logger logr.Logger) error {
+	if agenttask == nil {
+		return nil
+	}
+
+	networkPolicy := buildNetworkPolicy(agenttask.Namespace, agenttask.Name)
+
+	err := r.Get(ctx, types.NamespacedName{Name: networkPolicy.Name, Namespace: networkPolicy.Namespace}, networkPolicy)
+	if err != nil {
+		if client.IgnoreNotFound(err) == nil {
+			// NetworkPolicy does not exist, create it.
+			logger.Info("Creating NetworkPolicy for AgentTask", "networkPolicyName", networkPolicy.Name)
+			if err := ctrl.SetControllerReference(agenttask, networkPolicy, r.Scheme); err != nil {
+				logger.Error(err, "Unable to set owner reference on NetworkPolicy for AgentTask", "agentTaskName", agenttask.Name)
+				return err
+			}
+
+			if err := r.Create(ctx, networkPolicy); err != nil {
+				logger.Error(err, "Unable to create NetworkPolicy for AgentTask", "agentTaskName", agenttask.Name)
+				return err
+			}
+
+			logger.Info("Created NetworkPolicy for AgentTask", "networkPolicyName", networkPolicy.Name)
+		} else {
+			logger.Error(err, "Unable to fetch NetworkPolicy for AgentTask", "networkPolicyName", networkPolicy.Name)
+			return err
+		}
+	} else {
+		logger.Info("NetworkPolicy already exists for AgentTask", "networkPolicyName", networkPolicy.Name)
+	}
+
+	return nil
+}
+
 // Calculate a hash of the AgentTask spec to use as an annotation on the Pod for change detection.
 func calculateSpecHash(agenttask *agenttasksv1.AgentTask, specBytes []byte) string {
 	if agenttask == nil {
@@ -384,16 +469,4 @@ func buildConfigMapName(agenttask *agenttasksv1.AgentTask) string {
 	}
 
 	return agenttask.Name + calculateSpecHash(agenttask, specBytes) + "-config"
-}
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *AgentTaskReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&agenttasksv1.AgentTask{}).
-		Named("agenttask").
-		Watches(
-			&corev1.Pod{},
-			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &agenttasksv1.AgentTask{}),
-		).
-		Complete(r)
 }

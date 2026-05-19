@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gvisor-smoke
+spec:
+  runtimeClassName: gvisor
+  restartPolicy: Never
+  containers:
+  - name: smoke
+    image: busybox:1.36
+    command: ["sh", "-c", "echo running under gvisor; sleep 15"]

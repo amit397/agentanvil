@@ -270,4 +270,6 @@ If v1 succeeds, follow-up work could include: multi-agent orchestration (subagen
   - ```make install```
   - ```make run```
 - Run on another terminal:
-  - ```kubectl apply -f config/samples/agenttasks_v1_agenttask.yaml```
+  - ```kubectl apply -f config/samples/[name].yaml```
+- To delete resources:
+  - ```kubectl delete -f config/samples/[name].yaml```
