@@ -28,3 +28,11 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# Python SDK
+sdk/python/.venv/
+sdk/python/**/__pycache__/
+sdk/python/**/*.egg-info/
+sdk/python/.pytest_cache/
+sdk/python/.ruff_cache/
+sdk/python/.mypy_cache/

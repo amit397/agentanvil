@@ -1,10 +1,22 @@
 package controller
 
 import (
+	"os"
+
 	agenttasksv1 "github.com/amit397/agentanvil/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// agentImage is the Track-A SDK image. Override via AGENT_ANVIL_SDK_IMAGE for
+// `kind load docker-image ...` flows during local development. The default tag
+// is what `make sdk-build` produces.
+func agentImage() string {
+	if v := os.Getenv("AGENT_ANVIL_SDK_IMAGE"); v != "" {
+		return v
+	}
+	return "agent-anvil-sdk:dev"
+}
 
 func buildPodForAgentTask(agenttask *agenttasksv1.AgentTask) *corev1.Pod {
 	if agenttask == nil {
@@ -26,10 +38,11 @@ func buildPodForAgentTask(agenttask *agenttasksv1.AgentTask) *corev1.Pod {
 			RuntimeClassName: &runtimeClassName,
 			Containers: []corev1.Container{
 				{
-					Name:    "agent",
-					Image:   "busybox",                                                                  // TODO: Replace with the actual image needed for the task
-					Command: []string{"/bin/sh", "-c"},                                                  // Placeholder command, replace with actual command for the task
-					Args:    []string{"echo \"Pod running for AgentTask " + taskID + "\" && sleep 120"}, // Placeholder command, replace with actual command for the task
+					Name:            "agent",
+					Image:           agentImage(),
+					ImagePullPolicy: corev1.PullIfNotPresent,
+					// The SDK's entrypoint reads /etc/agent-anvil/task.yaml and writes
+					// /var/log/agent-anvil/events.jsonl. No command/args override needed.
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "task",
@@ -66,22 +79,21 @@ func buildPodForAgentTask(agenttask *agenttasksv1.AgentTask) *corev1.Pod {
 						},
 						{
 							Name:  "AGENT_ANVIL_MODE",
-							Value: "record", // TODO: Make this configurable (record, replay, fork)
+							Value: "record", // TODO: Make this configurable (record, replay, fork) — Phase 2A
 						},
 						{
 							Name:  "AGENT_ANVIL_REPLAY_FROM_STEP",
-							Value: "0", // TODO: Set this value when in replay mode to specify which step to replay from
-							// Value: "step-2", // Example value for replay mode
-							// Leave empty or unset when not in replay mode
+							Value: "0",
 						},
 						{
-							Name:  "HTTP_PROXY",
-							Value: "http://localhost:8080", // TODO: Replace with actual proxy URL if needed
+							Name:  "AGENT_ANVIL_ECHO_EVENTS",
+							Value: "1", // Mirror events to stdout so `kubectl logs` shows the trace until trace storage (Phase 2B) lands.
 						},
-						{
-							Name:  "HTTPS_PROXY",
-							Value: "http://localhost:8080", // TODO: Replace with actual proxy URL if needed
-						},
+						// HTTP_PROXY / HTTPS_PROXY are intentionally NOT set here yet.
+						// The recording proxy sidecar lands in Phase 2A; until it exists,
+						// pointing at the placeholder busybox sidecar would break egress
+						// for any task that calls a real LLM. Tasks that need network must
+						// run via the mock provider (provider: mock) for now.
 						// {
 						// 	Name: "AGENT_ANVIL_API_KEY_FILE",
 						// 	Value: "/etc/agent-anvil/secrets/anthropic-api-key", // TODO: Replace with actual file path
@@ -93,10 +105,14 @@ func buildPodForAgentTask(agenttask *agenttasksv1.AgentTask) *corev1.Pod {
 					},
 				},
 				{
+					// Recording proxy is Phase 2A (Track A). For now this is a no-op
+					// sidecar that waits for the agent to finish so the pod can transition
+					// to Succeeded. When Phase 2A lands, replace image + command with the
+					// real recording proxy from cmd/proxy.
 					Name:    "proxy",
-					Image:   "busybox",                                                                  // TODO: Replace with the actual image needed for the proxy
-					Command: []string{"/bin/sh", "-c"},                                                  // Placeholder command, replace with actual command for the proxy
-					Args:    []string{"echo \"Pod running for AgentTask " + taskID + "\" && sleep 120"}, // Placeholder command, replace with actual command for the proxy
+					Image:   "busybox",
+					Command: []string{"/bin/sh", "-c"},
+					Args:    []string{"echo \"proxy sidecar (Phase 2A stub) for " + taskID + "\" && sleep 30"},
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "task",

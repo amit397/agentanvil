@@ -1,0 +1,20 @@
+apiVersion: agenttasks.agentanvil.com/v1
+kind: AgentTask
+metadata:
+  name: agenttask-helloworld
+  labels:
+    app.kubernetes.io/name: agentanvil
+spec:
+  prompt: "Say hello and stop."
+  systemPrompt: "Be brief."
+  # The mock provider exercises the full pod lifecycle without needing an
+  # LLM API key or working recording proxy. Switch to provider: anthropic
+  # once the recording proxy (Phase 2A) lands or the NetworkPolicy is
+  # relaxed for outbound HTTPS.
+  model:
+    provider: mock
+    name: echo
+  tools:
+    - name: bash
+      timeoutSeconds: 30
+  maxSteps: 3

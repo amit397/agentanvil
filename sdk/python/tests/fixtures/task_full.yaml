@@ -1,0 +1,32 @@
+prompt: "Fix the bug in src/parser.py that causes infinite recursion on nested arrays"
+systemPrompt: "You are a careful coding agent. Read code before editing."
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  apiKeySecretRef:
+    name: agent-credentials
+    key: anthropic-api-key
+  params:
+    temperature: "0"
+    maxTokens: "8192"
+tools:
+  - name: bash
+    timeoutSeconds: 60
+  - name: file_read
+  - name: file_write
+  - name: file_edit
+workspace:
+  baseImage: ghcr.io/example/swebench-task:abc123
+  initCommand: ["pip", "install", "-r", "requirements.txt"]
+timeoutSeconds: 1800
+maxSteps: 100
+resources:
+  cpu: "2"
+  memory: 4Gi
+  ephemeralStorage: 10Gi
+checkpointPolicy:
+  mode: Manual
+  intervalSeconds: 300
+replay:
+  checkpointId: "task-abc-123"
+  fromStep: 0

@@ -127,6 +127,43 @@ docker-build: ## Build docker image with the manager.
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+##@ Agent SDK (Track A — Python)
+
+SDK_DIR ?= sdk/python
+SDK_IMG ?= agent-anvil-sdk:dev
+PY ?= python3
+
+.PHONY: sdk-install
+sdk-install: ## Install the Python SDK with dev extras into a local venv.
+	$(PY) -m venv $(SDK_DIR)/.venv
+	$(SDK_DIR)/.venv/bin/pip install --quiet --upgrade pip
+	$(SDK_DIR)/.venv/bin/pip install --quiet -e "$(SDK_DIR)[dev]"
+
+.PHONY: sdk-test
+sdk-test: sdk-install ## Run the Python SDK test suite.
+	$(SDK_DIR)/.venv/bin/pytest $(SDK_DIR)
+
+.PHONY: sdk-lint
+sdk-lint: sdk-install ## Lint the Python SDK with ruff.
+	$(SDK_DIR)/.venv/bin/ruff check $(SDK_DIR)/src $(SDK_DIR)/tests
+
+.PHONY: sdk-build
+sdk-build: ## Build the SDK docker image (override tag with SDK_IMG=...).
+	$(CONTAINER_TOOL) build -t $(SDK_IMG) $(SDK_DIR)
+
+.PHONY: sdk-load-kind
+sdk-load-kind: sdk-build ## Load the SDK image into the kind cluster (KIND_CLUSTER override supported).
+	$(KIND) load docker-image $(SDK_IMG) --name $(KIND_CLUSTER)
+
+.PHONY: demo
+demo: sdk-install ## Smoke-test the SDK locally with the mock provider — no API key required.
+	AGENT_ANVIL_PROVIDER=mock $(SDK_DIR)/.venv/bin/python -m agent_anvil \
+		--task $(SDK_DIR)/examples/trivial.yaml \
+		--trace-dir /tmp/agent-anvil-trace \
+		--workspace /tmp/agent-anvil-workspace \
+		--task-id local-demo \
+		--echo-events
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/

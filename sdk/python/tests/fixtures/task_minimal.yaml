@@ -1,0 +1,8 @@
+prompt: "Say hello and stop."
+systemPrompt: "Be brief."
+model:
+  provider: anthropic
+  name: claude-haiku-4-5
+tools:
+  - name: bash
+    timeoutSeconds: 30

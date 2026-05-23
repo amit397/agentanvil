@@ -1,0 +1,18 @@
+# Minimal local-only example. The mock provider returns an `echo:` reply so
+# no API key is required.
+#
+# Run with:
+#   AGENT_ANVIL_PROVIDER=mock python -m agent_anvil \
+#     --task examples/trivial.yaml \
+#     --trace-dir /tmp/agent-anvil-trace \
+#     --workspace /tmp/agent-anvil-workspace
+
+prompt: "Say hello and stop."
+systemPrompt: "You are a helpful agent."
+model:
+  provider: mock
+  name: echo
+tools:
+  - name: bash
+    timeoutSeconds: 30
+maxSteps: 5
